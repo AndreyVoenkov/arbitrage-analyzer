@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru" xmlns:th="http://www.thymeleaf.org">
+<head>
+    <meta charset="UTF-8">
+    <title>Анализ арбитража</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 40px;
+        }
+        .container {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            max-width: 600px;
+            margin: auto;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+        }
+        .info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #fdfdfd;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+        select, button {
+            padding: 8px;
+            margin-top: 10px;
+            font-size: 16px;
+        }
+        button {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>Анализ арбитража МосБиржи</h1>
+
+    <form action="/analyze" method="get">
+        <label for="selectedFuture">Выберите фьючерс:</label>
+        <select id="selectedFuture" name="selectedFuture" required>
+            <option value="">-- выберите --</option>
+            <th:block th:each="future : ${futures}">
+                <option th:value="${future}"
+                        th:text="${future}"
+                        th:selected="${future} == ${selectedFuture}">
+                </option>
+            </th:block>
+        </select>
+        <button type="submit">Анализировать</button>
+    </form>
+
+    <div class="info" th:if="${result != null}">
+        <p><strong>Выбранный фьючерс:</strong> <span th:text="${selectedFuture}"></span></p>
+        <p><strong>Цена спотового индекса:</strong> <span th:text="${result.spotPrice}"></span></p>
+        <p><strong>Цена фьючерса:</strong> <span th:text="${result.futuresPrice}"></span></p>
+        <p><strong>Ключевая ставка (%):</strong> <span th:text="${result.interestRate}"></span></p>
+        <p><strong>Рекомендация:</strong> <span th:text="${result.recommendation}"></span></p>
+    </div>
+</div>
+</body>
+</html>

@@ -1,0 +1,4 @@
+org\example\moexarbitrage\service\MoexService.class
+org\example\moexarbitrage\ArbitrageApplication.class
+org\example\moexarbitrage\controller\ArbitrageController.class
+org\example\moexarbitrage\model\ArbitrageResult.class
