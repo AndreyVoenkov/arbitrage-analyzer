@@ -42,32 +42,42 @@ public class MoexService {
 
             int secidIndex = -1;
             int statusIndex = -1;
+            int lastTradeDateIndex = -1;
 
             for (int i = 0; i < columns.size(); i++) {
                 String col = columns.get(i).asText();
-                if (col.equals("SECID"))
-                    secidIndex = i;
-                if (col.equals("STATUS"))
-                    statusIndex = i;
+                if (col.equals("SECID")) secidIndex = i;
+                if (col.equals("STATUS")) statusIndex = i;
+                if (col.equals("LASTTRADEDATE")) lastTradeDateIndex = i;
             }
 
-            if (secidIndex == -1)
-                return activeFutures;
+            if (secidIndex == -1) return activeFutures;
 
-            for (JsonNode futureData : securities) {
-                if (statusIndex != -1) {
-                    String status = futureData.get(statusIndex).asText();
-                    if (!"ACTIVE".equalsIgnoreCase(status))
-                        continue;
+            for (JsonNode row : securities) {
+                if (statusIndex != -1 && !row.get(statusIndex).asText().equalsIgnoreCase("ACTIVE")) {
+                    continue;
                 }
-                String secid = futureData.get(secidIndex).asText();
+
+                if (lastTradeDateIndex != -1) {
+                    String dateStr = row.get(lastTradeDateIndex).asText();
+                    if (dateStr != null && !dateStr.isEmpty()) {
+                        LocalDate lastTradeDate = LocalDate.parse(dateStr);
+                        if (!lastTradeDate.isAfter(LocalDate.now())) {
+                            // Пропускаем фьючерсы, у которых дата истекла или сегодня
+                            continue;
+                        }
+                    }
+                }
+
+                String secid = row.get(secidIndex).asText();
                 activeFutures.add(secid);
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
         return activeFutures;
     }
+
 
     public String getUnderlyingAsset(String futuresSecid) {
         try {
