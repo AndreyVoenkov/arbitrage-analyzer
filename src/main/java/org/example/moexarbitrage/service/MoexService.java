@@ -238,7 +238,7 @@ public class MoexService {
             System.out.println("Ошибка при получении ключевой ставки ЦБ РФ: " + e.getMessage());
         }
 
-        return 0.15; // Заглушка на случай ошибки
+        return 0.0; // Заглушка на случай ошибки
     }
 
 
