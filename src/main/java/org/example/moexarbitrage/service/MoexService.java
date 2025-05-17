@@ -3,11 +3,21 @@ package org.example.moexarbitrage.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.moexarbitrage.model.ArbitrageResult;
+import org.jsoup.Jsoup;
+import org.jsoup.nodes.Document;
+import org.jsoup.nodes.Element;
+import org.jsoup.select.Elements;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
+import org.w3c.dom.NodeList;
+import org.xml.sax.InputSource;
 
+import javax.xml.parsers.DocumentBuilder;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.IOException;
+import java.io.StringReader;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
@@ -35,16 +45,20 @@ public class MoexService {
 
             for (int i = 0; i < columns.size(); i++) {
                 String col = columns.get(i).asText();
-                if (col.equals("SECID")) secidIndex = i;
-                if (col.equals("STATUS")) statusIndex = i;
+                if (col.equals("SECID"))
+                    secidIndex = i;
+                if (col.equals("STATUS"))
+                    statusIndex = i;
             }
 
-            if (secidIndex == -1) return activeFutures;
+            if (secidIndex == -1)
+                return activeFutures;
 
             for (JsonNode futureData : securities) {
                 if (statusIndex != -1) {
                     String status = futureData.get(statusIndex).asText();
-                    if (!"ACTIVE".equalsIgnoreCase(status)) continue;
+                    if (!"ACTIVE".equalsIgnoreCase(status))
+                        continue;
                 }
                 String secid = futureData.get(secidIndex).asText();
                 activeFutures.add(secid);
@@ -108,7 +122,8 @@ public class MoexService {
                         break;
                     }
                 }
-                if (lastValueIndex == -1) return 0.0;
+                if (lastValueIndex == -1)
+                    return 0.0;
 
                 double lastValue = marketdata.get(0).get(lastValueIndex).asDouble(0.0);
                 return lastValue;
@@ -135,7 +150,8 @@ public class MoexService {
                         break;
                     }
                 }
-                if (lastValueIndex == -1) return 0.0;
+                if (lastValueIndex == -1)
+                    return 0.0;
 
                 return marketdata.get(0).get(lastValueIndex).asDouble(0.0);
             }
@@ -191,20 +207,39 @@ public class MoexService {
 
     public double getKeyRateFromCbr() {
         try {
-            String url = "https://www.cbr-xml-daily.ru/daily_json.js";
-            String json = restTemplate.getForObject(url, String.class);
-            JsonNode root = objectMapper.readTree(json);
+            // Текущая дата в формате dd.MM.yyyy
+            String date1 = LocalDate.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+            // Текущая дата в формате dd/MM/yyyy
+            String date2 = LocalDate.now().format(DateTimeFormatter.ofPattern("dd/MM/yyyy"));
+            //Url на станицу ЦБ с актуальной ставкой на сегодня
+            String url = "https://www.cbr.ru/hd_base/keyrate/?UniDbQuery.Posted=True&UniDbQuery.From=" + date1 + "&UniDbQuery.To=" + date2;
 
-            // В этом JSON нет явного поля "KeyRate", но мы можем его заменить при необходимости на API ЦБ
-            // Альтернатива: получить ставку из справочника на сайте ЦБ РФ или парсить HTML
-            // Пока оставим заглушку, если не найдем
-            System.out.println("⚠️ В JSON от CBR не найдено поле ключевой ставки.");
+
+            // 1. Загружаем HTML
+            Document doc = Jsoup.connect(url).get();
+
+            // 2. Ищем таблицу с классом "data" (как в вашем примере)
+            Element table = doc.select("table.data").first();
+            if (table == null) {
+                System.out.println("Таблица не найдена!");
+
+            }
+            // 3. Извлекаем последнюю строку (актуальная ставка)
+            Elements rows = table.select("tr");
+            Element lastRow = rows.last();
+            String rate1 = lastRow.select("td").get(1).text();  // Ставка (вторая колонка)
+            rate1 = rate1.replace(',', '.');
+
+            double rate2 = Double.parseDouble(rate1) / 100.0; // переводим из процентов в доли
+            System.out.println("Ключевая ставка ЦБ РФ: " + rate2);
+            return rate2;
+
         } catch (Exception e) {
             System.out.println("Ошибка при получении ключевой ставки ЦБ РФ: " + e.getMessage());
         }
-        return 0.15; // Временно — 15% как заглушка, заменим после выбора корректного источника
-    }
 
+        return 0.15; // Заглушка на случай ошибки
+    }
 
 
     public double getSpotPriceForUnderlying(String assetCode) {
@@ -245,6 +280,7 @@ public class MoexService {
         }
         return assetCode;
     }
+
     public int getDaysToExpiration(String futuresSecid) {
         try {
             String url = String.format("https://iss.moex.com/iss/securities/%s.json", futuresSecid);
