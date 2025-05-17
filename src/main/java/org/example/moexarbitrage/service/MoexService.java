@@ -3,10 +3,14 @@ package org.example.moexarbitrage.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.example.moexarbitrage.model.ArbitrageResult;
+import org.example.moexarbitrage.model.FutureInstrument;
+import org.example.moexarbitrage.repository.FutureInstrumentRepository;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
 import org.jsoup.select.Elements;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.w3c.dom.NodeList;
@@ -32,8 +36,75 @@ public class MoexService {
     private final RestTemplate restTemplate = new RestTemplate();
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public List<String> getAvailableFutures() {
-        List<String> activeFutures = new ArrayList<>();
+    @Autowired
+    private FutureInstrumentRepository repository;
+
+//    public List<String> getAvailableFutures() {
+//        List<String> activeFutures = new ArrayList<>();
+//        try {
+//            String json = restTemplate.getForObject(FUTURES_URL, String.class);
+//            JsonNode root = objectMapper.readTree(json);
+//            JsonNode securities = root.path("securities").path("data");
+//            JsonNode columns = root.path("securities").path("columns");
+//
+//            int secidIndex = -1;
+//            int statusIndex = -1;
+//            int lastTradeDateIndex = -1;
+//            int assetCodeIndex = -1;
+//
+//            for (int i = 0; i < columns.size(); i++) {
+//                String col = columns.get(i).asText();
+//                if ("SECID".equalsIgnoreCase(col)) secidIndex = i;
+//                if ("STATUS".equalsIgnoreCase(col)) statusIndex = i;
+//                if ("LASTTRADEDATE".equalsIgnoreCase(col)) lastTradeDateIndex = i;
+//                if ("ASSETCODE".equalsIgnoreCase(col)) assetCodeIndex = i;
+//            }
+//
+//            if (secidIndex == -1 || lastTradeDateIndex == -1 || assetCodeIndex == -1)
+//                return activeFutures;
+//
+//            for (JsonNode row : securities) {
+//                String secid = row.get(secidIndex).asText();
+//
+//                // 1. Только ACTIVE
+//                if (statusIndex != -1 && !row.get(statusIndex).asText().equalsIgnoreCase("ACTIVE")) {
+//                    continue;
+//                }
+//
+//                // 2. Дата экспирации
+//                String dateStr = row.get(lastTradeDateIndex).asText();
+//                if (dateStr == null || dateStr.isEmpty()) continue;
+//
+//                LocalDate lastTradeDate = LocalDate.parse(dateStr);
+//                if (!lastTradeDate.isAfter(LocalDate.now()) || lastTradeDate.isEqual(LocalDate.of(2100, 1, 1))) {
+//                    continue;
+//                }
+//
+//                // 3. Получаем базовый актив (ASSETCODE → normalize)
+//                String assetCodeRaw = row.get(assetCodeIndex).asText();
+//                String assetCode = normalizeUnderlying(assetCodeRaw);
+//
+//                // 4. Получаем цены
+//                double futuresPrice = getFuturesPrice(secid);
+//                double spotPrice = getSpotPriceForUnderlying(assetCode);
+//
+//                if (futuresPrice == 0.0 || spotPrice == 0.0) {
+//                    continue;
+//                }
+//
+//                // Всё в порядке — добавляем
+//                activeFutures.add(secid);
+//            }
+//
+//        } catch (Exception e) {
+//            e.printStackTrace();
+//        }
+//
+//        return activeFutures;
+//    }
+
+
+    public void refreshFuturesToDb() {
         try {
             String json = restTemplate.getForObject(FUTURES_URL, String.class);
             JsonNode root = objectMapper.readTree(json);
@@ -43,40 +114,66 @@ public class MoexService {
             int secidIndex = -1;
             int statusIndex = -1;
             int lastTradeDateIndex = -1;
+            int assetCodeIndex = -1;
 
             for (int i = 0; i < columns.size(); i++) {
                 String col = columns.get(i).asText();
-                if (col.equals("SECID")) secidIndex = i;
-                if (col.equals("STATUS")) statusIndex = i;
-                if (col.equals("LASTTRADEDATE")) lastTradeDateIndex = i;
+                if ("SECID".equalsIgnoreCase(col)) secidIndex = i;
+                if ("STATUS".equalsIgnoreCase(col)) statusIndex = i;
+                if ("LASTTRADEDATE".equalsIgnoreCase(col)) lastTradeDateIndex = i;
+                if ("ASSETCODE".equalsIgnoreCase(col)) assetCodeIndex = i;
             }
 
-            if (secidIndex == -1) return activeFutures;
+            List<FutureInstrument> result = new ArrayList<>();
 
             for (JsonNode row : securities) {
-                if (statusIndex != -1 && !row.get(statusIndex).asText().equalsIgnoreCase("ACTIVE")) {
-                    continue;
-                }
-
-                if (lastTradeDateIndex != -1) {
-                    String dateStr = row.get(lastTradeDateIndex).asText();
-                    if (dateStr != null && !dateStr.isEmpty()) {
-                        LocalDate lastTradeDate = LocalDate.parse(dateStr);
-                        if (!lastTradeDate.isAfter(LocalDate.now())) {
-                            // Пропускаем фьючерсы, у которых дата истекла или сегодня
-                            continue;
-                        }
-                    }
-                }
-
                 String secid = row.get(secidIndex).asText();
-                activeFutures.add(secid);
+
+                // Фильтрация по статусу
+//                if (statusIndex != -1 && !row.get(statusIndex).asText().equalsIgnoreCase("ACTIVE")) {
+//                    continue;
+//                }
+
+                // Фильтрация по дате
+                String dateStr = row.get(lastTradeDateIndex).asText();
+//                if (dateStr == null || dateStr.isEmpty()) continue;
+
+                LocalDate expirationDate = LocalDate.parse(dateStr);
+//                if (!expirationDate.isAfter(LocalDate.now()) || expirationDate.isEqual(LocalDate.of(2100, 1, 1))) {
+//                    continue;
+//                }
+
+                // Получаем assetCode
+                String assetCodeRaw = row.get(assetCodeIndex).asText();
+                String assetCode = normalizeUnderlying(assetCodeRaw);
+
+                // Получаем цены
+                double futuresPrice = getFuturesPrice(secid);
+                double spotPrice = getSpotPriceForUnderlying(assetCode);
+
+//                if (futuresPrice == 0.0 || spotPrice == 0.0) continue;
+
+                // Заполняем объект
+                FutureInstrument fi = new FutureInstrument();
+                fi.setSecid(secid);
+                fi.setAssetCode(assetCode);
+                fi.setExpirationDate(expirationDate);
+                fi.setFuturesPrice(futuresPrice);
+                fi.setSpotPrice(spotPrice);
+
+                result.add(fi);
             }
+
+            // Сохраняем в базу
+            repository.deleteAllInBatch(); // очищаем старые данные
+            repository.saveAll(result);
+            System.out.println("Обновлено " + result.size() + " фьючерсов в базе.");
         } catch (Exception e) {
             e.printStackTrace();
         }
-        return activeFutures;
     }
+
+
 
 
     public String getUnderlyingAsset(String futuresSecid) {
@@ -272,7 +369,7 @@ public class MoexService {
 
                 if (lastIndex != -1 && marketdata.get(0).get(lastIndex) != null) {
                     double value = marketdata.get(0).get(lastIndex).asDouble();
-                    System.out.println("Spot price for " + assetCode + " is: " + value);
+                   // System.out.println("Spot price for " + assetCode + " is: " + value);
                     return value;
                 }
             }
@@ -299,8 +396,10 @@ public class MoexService {
             JsonNode columns = root.path("description").path("columns");
             JsonNode data = root.path("description").path("data").get(0);
 
+
             int lastTradeDateIndex = -1;
             for (int i = 0; i < columns.size(); i++) {
+
                 if ("LASTTRADEDATE".equalsIgnoreCase(columns.get(i).asText())) {
                     lastTradeDateIndex = i;
                     break;
@@ -320,6 +419,34 @@ public class MoexService {
         }
         return 0;
     }
+
+    public String getExpirationDate(String futuresSecid) {
+        try {
+            String url = String.format("https://iss.moex.com/iss/engines/futures/markets/forts/securities/%s.json", futuresSecid);
+            String json = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode columns = root.path("securities").path("columns");
+            JsonNode data = root.path("securities").path("data").get(0);
+
+            int index = -1;
+            for (int i = 0; i < columns.size(); i++) {
+                if ("LASTTRADEDATE".equalsIgnoreCase(columns.get(i).asText())) {
+                    index = i;
+                    break;
+                }
+            }
+
+            if (index != -1 && !data.get(index).isNull()) {
+                return data.get(index).asText();
+            }
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+        return "н/д";
+    }
+
+
+
 
 
 }
