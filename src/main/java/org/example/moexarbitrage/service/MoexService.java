@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.IOException;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -155,23 +157,29 @@ public class MoexService {
     }
 
     public ArbitrageResult analyzeArbitrage(String selectedFuture) {
+        // Получение цен
         String assetCodeRaw = getUnderlyingAsset(selectedFuture);
         String assetCode = normalizeUnderlying(assetCodeRaw);
-
         double spotPrice = getSpotPriceForUnderlying(assetCode);
-
         double futuresPrice = getFuturesPrice(selectedFuture);
 
-        double interestRate = 0.15; // 15% годовых
-        double theoreticalPrice = spotPrice * (1 + interestRate);
+        // Получаем ключевую ставку
+        double interestRate = getKeyRateFromCbr();
 
+        // Получаем дату экспирации
+        int daysToExpiration = getDaysToExpiration(selectedFuture);
+        System.out.println("До экспирации осталось дней: " + daysToExpiration);
+
+        // Расчёт теоретической цены
+        double theoreticalPrice = spotPrice * (1 + interestRate * daysToExpiration / 365.0);
+
+        // Расчёт арбитража
         double arbitragePercent = 0;
-        String recommendation;
-
         if (theoreticalPrice != 0) {
             arbitragePercent = ((futuresPrice - theoreticalPrice) / theoreticalPrice) * 100;
         }
 
+        String recommendation;
         if (arbitragePercent > 0) {
             recommendation = String.format("Фьючерс переоценен на %.2f%%. Рекомендация: продать фьючерс, купить акции.", arbitragePercent);
         } else {
@@ -180,6 +188,24 @@ public class MoexService {
 
         return new ArbitrageResult(spotPrice, futuresPrice, theoreticalPrice, arbitragePercent, interestRate, recommendation);
     }
+
+    public double getKeyRateFromCbr() {
+        try {
+            String url = "https://www.cbr-xml-daily.ru/daily_json.js";
+            String json = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(json);
+
+            // В этом JSON нет явного поля "KeyRate", но мы можем его заменить при необходимости на API ЦБ
+            // Альтернатива: получить ставку из справочника на сайте ЦБ РФ или парсить HTML
+            // Пока оставим заглушку, если не найдем
+            System.out.println("⚠️ В JSON от CBR не найдено поле ключевой ставки.");
+        } catch (Exception e) {
+            System.out.println("Ошибка при получении ключевой ставки ЦБ РФ: " + e.getMessage());
+        }
+        return 0.15; // Временно — 15% как заглушка, заменим после выбора корректного источника
+    }
+
+
 
     public double getSpotPriceForUnderlying(String assetCode) {
         try {
@@ -218,6 +244,35 @@ public class MoexService {
             return assetCode.substring(0, assetCode.length() - 1);
         }
         return assetCode;
+    }
+    public int getDaysToExpiration(String futuresSecid) {
+        try {
+            String url = String.format("https://iss.moex.com/iss/securities/%s.json", futuresSecid);
+            String json = restTemplate.getForObject(url, String.class);
+            JsonNode root = objectMapper.readTree(json);
+            JsonNode columns = root.path("description").path("columns");
+            JsonNode data = root.path("description").path("data").get(0);
+
+            int lastTradeDateIndex = -1;
+            for (int i = 0; i < columns.size(); i++) {
+                if ("LASTTRADEDATE".equalsIgnoreCase(columns.get(i).asText())) {
+                    lastTradeDateIndex = i;
+                    break;
+                }
+            }
+
+            if (lastTradeDateIndex != -1) {
+                String lastTradeDateStr = data.get(lastTradeDateIndex).asText(); // формат: YYYY-MM-DD
+                LocalDate expirationDate = LocalDate.parse(lastTradeDateStr);
+                LocalDate today = LocalDate.now();
+
+                long daysBetween = ChronoUnit.DAYS.between(today, expirationDate);
+                return (int) Math.max(daysBetween, 0); // если дата уже прошла — 0
+            }
+        } catch (Exception e) {
+            System.out.println("Ошибка при получении даты экспирации: " + e.getMessage());
+        }
+        return 0;
     }
 
 
